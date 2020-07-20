@@ -14,8 +14,6 @@ bool buttonIsPressed;
 long pressTime;
 long deltaTimeButton = 0;
 
-
-
 void setup() {
   //Enable flash to be used as a toggle button.
   pinMode(0, INPUT_PULLUP);
@@ -51,7 +49,9 @@ void initWifi() {
 
 void initLED() {
   FastLED.addLeds<NEOPIXEL, LED_PIN>(leds, NUM_LEDS);
-  FastLED.setBrightness(100);
+  FastLED.setBrightness(50);
+  initLEDColor();
+  FastLED.clear(true);
   initLEDColor();
 }
 
@@ -79,32 +79,28 @@ void loop() {
 
 void processSerialInput() {
   command = Serial.parseInt();
+  Serial.read();
+  Serial.println(command);
+  mode = command;
   
-  
-  if(mode != command && isValidCommand(command)) {
-    Serial.read();
-    Serial.println(command);
-    mode = command;
-    switch(command) {
-      case -1: FastLED.clear(true);
-      case 0: initLEDColor();
-              break;
-      case 1: initFade();
-    }
-  }else {
-    Serial.println(command + " cannot be done");
+  switch(command) {
+    case -1: FastLED.clear(true);
+            break;
+    case 0: initLEDColor();
+            break;
+    case 1: initFade();
+            break;
+    case 2: turnOff(10, 100);
+            break;
+    default: break;
   }
-}
-
-bool isValidCommand(int command){
-  return command >= -1 && command <= 1;
 }
 
 void doLED() {
   switch(mode){
     case 1: moveLED(leds); //If fade, move leds along. (maybe change this to a less rainbow-y and more gradual fade)
             break;
-    default: break; //No need to set LEDs to the same color every time or to keep turning them off
+    default: break; //Other settings do not require continuous updates
   }
 }
 
@@ -114,7 +110,7 @@ void moveLED(CRGB leds[NUM_LEDS]){
     leds[count] = leds[count-1];
   }
   leds[0] = temp;
-  delay(10);
+  delay(10); // Might need to process this using delta Time? Not sure if this would cause problems with reading from serial input
   FastLED.show();
 }
 
@@ -128,7 +124,7 @@ void initFade() { //Probably should rewrite this function, pretty janky algorith
   int c = 0;
   for(int b = 0; b < 255; b++){
     leds[b + c].setHue(b);
-    if(b % 6 == 0){
+    if(b % 6 == 0){                        
       c++;
       leds[b + c].setHue(b);
     }
@@ -136,6 +132,13 @@ void initFade() { //Probably should rewrite this function, pretty janky algorith
   leds[299].setHue(255);
   leds[298].setHue(255);
   leds[297].setHue(255);
+}
+
+void turnOff(int first, int last) {
+  for(int i = first; i < last; i++){
+    leds[i].setHSV(255, 255, 255);
+  }
+  FastLED.show();
 }
 
 void buttonPress() {
