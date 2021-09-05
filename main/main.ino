@@ -3,165 +3,135 @@
 #include <FastLED.h>
 #include <ArduinoJson.h>
 #include <WiFiClientSecureBearSSL.h>
+#include <pt.h>
 
 #define WIFI_SSID "f231fa"
 #define WIFI_PASS "gain.037.barrier"
 #define NUM_LEDS 300
-#define LED_PIN 6
+#define BRIGHTNESS 100
+#define LED_PIN 5
 
+enum LED_MODE {
+  OFF = -1,
+  SOLID = 0,
+  RAINBOW = 1,
+  FLASH = 2
+};
+
+// LED Vars
+int led_hues[NUM_LEDS];
 CRGB leds[NUM_LEDS];
-int ledMode = -1;
+LED_MODE ledMode = OFF;
 long timer;
 bool isOn = false;
+CRGB color;
 int r, g, b;
 
-bool buttonIsPressed;
 long pressTime;
 long deltaTimeButton = 0;
 
+// Timer Vars
 long getInitTime;
 long deltaLEDTime;
 
-std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+pt ptRequest;
+
+// HTTPS Vars
+std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
 HTTPClient http;
 StaticJsonDocument<256> doc; //For Json Data Extraction
-const uint8_t fingerprint[20] = {0x94, 0xFC, 0xF6, 0x23, 0x6C, 0x37, 0xD5, 0xE7, 0x92, 0x78, 0x3C, 0x0B, 0x5F, 0xAD, 0x0C, 0xE4, 0x9E, 0xFD, 0x9E, 0xA8};
 
-//////////////////////////////////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-////////////////////////////////////////// S E T U P    F U N C T I O N S\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-////////////////////////////////////////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-
-void setup() {
-  //Enable flash to be used as a toggle button.
-  pinMode(0, INPUT_PULLUP);
-  buttonIsPressed = false;
-
-  //Enable and turn off built in LED
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);
-
-  Serial.begin(115200);
-  Serial.println("Program Started");
-  
-  initLED();
-  initWifi();
-  httpRequest("https://remote-leds.herokuapp.com/queue/dequeue");
+/**
+ * Setup leds
+ */
+void initLeds() {
+  FastLED.addLeds<WS2812B, LED_PIN>(leds, NUM_LEDS);
+  FastLED.clear(true);
+  FastLED.setBrightness(BRIGHTNESS);
 }
 
-void initWifi() {
-  //Attempt to connect
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-
-  bool flash = true;
-  //Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    if (flash) {
-      digitalWrite(LED_BUILTIN, HIGH);
-    } else {
-      digitalWrite(LED_BUILTIN, LOW);
+/**
+ * Flash leds for testing
+ */
+void ledTestCycle() {
+  delay(500);
+  CRGB colors[] = {CRGB::Red, CRGB::Green, CRGB::Blue};
+  for(CRGB color : colors) {
+    for(int i = 0; i < NUM_LEDS; i++) {
+      leds[i] = color;
     }
-    flash = !flash;
-    Serial.println("Connecting...");
+    FastLED.show();
+    delay(500);
   }
+  FastLED.clear(true);
+  delay(500);
+}
+
+/**
+ * Connect to the wifi and flash the led while connecting
+ */
+void connectToWifi() {
+  //Attempt to connect
+  bool ledIsOn = true;
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Connecting...");
+  while (WiFi.status() != WL_CONNECTED) {
+    int ledVal = ledIsOn ? HIGH : LOW;
+    ledIsOn = !ledIsOn;
+    digitalWrite(LED_BUILTIN, ledVal);
+    delay(1000);
+  }
+  Serial.println("Connected!");
 
   //Once connected show LED
   digitalWrite(LED_BUILTIN, LOW);
-  Serial.println("Connected to Wifi!");
+  Serial.println("\nConnected to WiFi!");
   Serial.println(WiFi.localIP()); 
-  client->setFingerprint(fingerprint);
 }
 
-void initLED() { //Enable LED Variables, but turn them off
-  FastLED.addLeds<NEOPIXEL, LED_PIN>(leds, NUM_LEDS);
-  delay(25);
-  FastLED.clear(true);
-}
-
-//////////////////////////////////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-////////////////////////////////////////// S E T U P    F U N C T I O N S    O V E R\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-////////////////////////////////////////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
-
-void loop() {
-  //Arbitrary Button Configuration
-  if (digitalRead(0) == 0 && !buttonIsPressed) {
-    buttonIsPressed = true;
-    pressTime = millis();
-    deltaTimeButton = 0;
-    buttonPress();
-  } else if (buttonIsPressed) {
-    if (digitalRead(0) == 1 && deltaTimeButton > 500) {
-      buttonIsPressed = false;
-    }
-    deltaTimeButton = millis() - pressTime;
-  }
-  
-  deltaLEDTime = millis() - getInitTime;
-  if(deltaLEDTime > 10000) {
-    Serial.println("Time");
+int httpRequestThread(struct pt* pt) {
+  PT_BEGIN(pt);
+  while(1) {
+    PT_WAIT_UNTIL(pt, millis() - getInitTime > 7500);
     httpRequest("https://remote-leds.herokuapp.com/queue/dequeue");
   }
   
-  doLED();
+
+  PT_END(pt);
 }
 
+/**
+ * Change the mode of the lds 
+ */
 void changeMode(int newMode) {
-  const char* username = doc["name"];
   if(newMode == 1 && ledMode == 1) return;
 
-  ledMode = newMode;
+  ledMode = (LED_MODE)newMode;
   switch (ledMode) {
-    case -1: Serial.print(username);
-      Serial.println(" turned off the lights");
+    case OFF:
       FastLED.clear(true);
       break;
-    case 0: setColors();
+    case SOLID:
+      FastLED.setBrightness(BRIGHTNESS);
+      extractColorFromJson();
       initLEDColor();
       break;
-    case 1: initFade();
+    case RAINBOW: 
+      FastLED.setBrightness(BRIGHTNESS);
+      initFade();
       break;
-    case 2: setColors();
+    case FLASH: 
+      FastLED.setBrightness(BRIGHTNESS);
+      extractColorFromJson();
       initFlash();
       break;
     default: break;
   }
-
 }
 
-void processSerialInput() {
-  //  char input[8];
-  //  Serial.readString().toCharArray(input, 8);
-  //  //hexStringToInt(input);
-}
-
-void doLED() {
-  switch (ledMode) {
-    case 1: moveLED(); //If fade, move leds along. (maybe change this to a less rainbow-y and more gradual fade)
-      break;
-    case 2: flash();
-    default: break; //Other settings do not require continuous updates
-  }
-}
-
-void setColors() {
-  const char* hex = doc["color"];
-  char color[5];
-  color[0] = '0';
-  color[1] = 'x';
-
-  color[2] = hex[1];
-  color[3] = hex[2];
-  r = strtol(color, NULL, 16); //Red
-
-  color[2] = hex[3];
-  color[3] = hex[4];
-  g = strtol(color, NULL, 16); //Green
-
-  color[2] = hex[5];
-  color[3] = hex[6];
-  b = strtol(color, NULL, 16); //Blue
-}
-
+/**
+ * Turn off the LEDs (set all to black)
+ */
 void turnOff(int first, int last) {
   for (int i = first; i < last; i++) {
     leds[i].setHSV(255, 255, 255);
@@ -169,30 +139,104 @@ void turnOff(int first, int last) {
   FastLED.show();
 }
 
+void setup() {
+  // Init Serial
+  Serial.begin(9600);
+  while(!Serial) delay(250);
+  Serial.println("");
+  Serial.println("Program Started");
+  Serial.flush();
+
+  //Enable flash to be used as a toggle button.
+  // pinMode(0, INPUT_PULLUP);
+  // buttonIsPressed = false;
+
+  // Init built-in led
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+  
+  // Init leds
+  initLeds();
+  ledTestCycle();
+
+  // Connect to Wifi and perform setup
+  connectToWifi();
+  client->setInsecure();
+
+  // Initial http request
+  httpRequest("https://remote-leds.herokuapp.com/queue/dequeue");               
+
+  PT_INIT(&ptRequest);                                                                                                                                                                                                                                                                                           
+}
+
+/**
+ * Handler for special LED logic every cycle
+ */
+void doLED() {
+  switch (ledMode) {
+    case RAINBOW: fade(); //If fade, move leds along. (maybe change this to a less rainbow-y and more gradual fade)
+      break;
+    case FLASH: flash();
+    default: break; //Other settings do not require continuous updates
+  }
+}
+
+
+void loop() {
+  // GET latest led config every 10 seconds
+  // Would be better to update this to a socket stream in the future
+  PT_SCHEDULE(httpRequestThread(&ptRequest));
+  doLED();
+}
+
+void extractColorFromJson() {
+  const char* hex = doc["color"];
+  char colorBuf[5];
+  colorBuf[0] = '0';
+  colorBuf[1] = 'x';
+
+  colorBuf[2] = hex[1];
+  colorBuf[3] = hex[2];
+  color.r = strtol(colorBuf, NULL, 16); // Red
+
+  colorBuf[2] = hex[3];
+  colorBuf[3] = hex[4];
+  color.g = strtol(colorBuf, NULL, 16); // Green
+
+  colorBuf[2] = hex[5];
+  colorBuf[3] = hex[6];
+  color.b = strtol(colorBuf, NULL, 16); // Blue
+}
+
 void initLEDColor() {
   for (int i = 0; i < NUM_LEDS; i++) {
-    leds[i].setRGB(r, g, b);
+    leds[i] = color;
   }
-  FastLED.setBrightness(50);
   FastLED.show();
 }
 
-void initFade() { //Probably should rewrite this function, pretty janky algorithm
-  FastLED.setBrightness(50);
-  //Set up for fade
-  int c = 0;
-  for (int b = 0; b < 255; b++) {
-    leds[b + c].setHue(b);
-    if (b % 6 == 0) {
-      c++;
-      leds[b + c].setHue(b);
+/**
+ * Init ~1/3 of the color spectrum across all 300 leds
+ */
+void initFade() {
+  Serial.println("init fade");
+  for(int hue = 0; hue < 100; hue++) {
+    for(int led = 0; led < 3; led++) {
+      leds[hue * 3 + led].setHue(hue);
+      led_hues[hue * 3 + led] = hue;
     }
   }
-  leds[299].setHue(255);
-  leds[298].setHue(255);
-  leds[297].setHue(255);
+  FastLED.show();
 }
 
+void fade() {
+  for(int led = 0; led < NUM_LEDS; led++) {
+    led_hues[led] = (led_hues[led] + 1) % 256;
+    leds[led].setHue(led_hues[led]);
+  }
+  delay(30);
+  FastLED.show();
+}
 void initFlash() {
   isOn = true;
   timer = millis();
@@ -205,7 +249,7 @@ void moveLED() {
     leds[count] = leds[count - 1];
   }
   leds[0] = temp;
-  delay(10); // Might need to process this using delta Time? Not sure if this would cause problems with reading from serial input
+  delay(50); // Might need to process this using delta Time? Not sure if this would cause problems with reading from serial input
   FastLED.show();
 }
 
@@ -226,13 +270,8 @@ void flash() {
   }
 }
 
-void buttonPress() {
-  httpRequest("https://remote-leds.herokuapp.com/queue/dequeue");
-}
-
 void httpRequest(String url) { //Later change the GET request to occur within a while loop with http.connected to simulate a async function();
   Serial.print("Requesting @ " + url + "...");
-
   http.begin(*client, url);
   int httpCode;
   httpCode = http.GET();
