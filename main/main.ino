@@ -219,7 +219,7 @@ void initLEDColor() {
  * Init ~1/3 of the color spectrum across all 300 leds
  */
 void initFade() {
-  Serial.println("init fade");
+  // Serial.println("init fade");
   for(int hue = 0; hue < 100; hue++) {
     for(int led = 0; led < 3; led++) {
       leds[hue * 3 + led].setHue(hue);
@@ -271,11 +271,11 @@ void flash() {
 }
 
 void httpRequest(String url) { //Later change the GET request to occur within a while loop with http.connected to simulate a async function();
-  Serial.print("Requesting @ " + url + "...");
+  // Serial.print("Requesting @ " + url + "...");
   http.begin(*client, url);
   int httpCode;
   httpCode = http.GET();
-  Serial.println(httpCode);
+  // Serial.println(httpCode);
 
   if (httpCode == 200) {
     deserializeJson(doc, http.getString());
