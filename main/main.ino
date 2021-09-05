@@ -8,7 +8,7 @@
 #define WIFI_SSID "f231fa"
 #define WIFI_PASS "gain.037.barrier"
 #define NUM_LEDS 300
-#define BRIGHTNESS 100
+#define BRIGHTNESS 75
 #define LED_PIN 5
 
 enum LED_MODE {
@@ -45,7 +45,7 @@ StaticJsonDocument<256> doc; //For Json Data Extraction
  * Setup leds
  */
 void initLeds() {
-  FastLED.addLeds<WS2812B, LED_PIN>(leds, NUM_LEDS);
+  FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
   FastLED.clear(true);
   FastLED.setBrightness(BRIGHTNESS);
 }
